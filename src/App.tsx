@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { trackEvent } from "@aptabase/tauri";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { Navigation } from "./components/Navigation";
 import { Sidebar } from "./components/Sidebar";
 import { BankAccount } from "./types";
@@ -16,9 +18,21 @@ export default function App() {
   const [showSetup, setShowSetup] = useState(false);
   const [userName, setUserName] = useState<string>('');
 
-  // Track app launch in Aptabase analytics
+  // Track app launch and check for updates
   useEffect(() => {
     trackEvent("app_started");
+
+    // Check for updates silently on launch
+    check().then(update => {
+      if (update?.available) {
+        const msg = `A new version (${update.version}) is available!\n\nWould you like to download and install it now? The app will restart automatically.`;
+        if (window.confirm(msg)) {
+          update.downloadAndInstall().then(() => relaunch());
+        }
+      }
+    }).catch(() => {
+      // Silently ignore update check failures (e.g., no internet)
+    });
   }, []);
 
   useEffect(() => {
