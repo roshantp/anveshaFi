@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "anveshaFi",
-  "version": "1.0.4",
-  "identifier": "com.acer.anveshafi",
+  "version": "1.0.5",
+  "identifier": "com.acer.anveshaFi",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",

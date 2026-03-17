@@ -356,14 +356,15 @@ pub fn export_year_csv(state: State<AppState>, year: String) -> Result<String, S
         let db = state.db.lock().unwrap();
         fetch_transactions_as_csv(&db, None, Some(&year), None)?
     };
-    let path = rfd::FileDialog::new()
+    let path: Option<std::path::PathBuf> = rfd::FileDialog::new()
         .set_file_name(&format!("anveshaFi_{}.csv", year.replace('/', "-")))
         .add_filter("CSV", &["csv"])
         .save_file();
     
     match path {
         Some(p) => {
-            std::fs::write(&p, &csv).map_err(|e| e.to_string())?;
+            let p: std::path::PathBuf = p;
+            std::fs::write::<&std::path::PathBuf, &String>(&p, &csv).map_err(|e| e.to_string())?;
             Ok(format!("Exported to {}", p.display()))
         }
         None => Err("Export cancelled".to_string()),
@@ -391,14 +392,15 @@ pub fn export_month_csv(state: State<AppState>, year: String, month: i64, month_
         let db = state.db.lock().unwrap();
         fetch_transactions_as_csv(&db, None, Some(&year), Some(month))?
     };
-    let path = rfd::FileDialog::new()
+    let path: Option<std::path::PathBuf> = rfd::FileDialog::new()
         .set_file_name(&format!("anveshaFi_{}_{}.csv", year.replace('/', "-"), month_name))
         .add_filter("CSV", &["csv"])
         .save_file();
     
     match path {
         Some(p) => {
-            std::fs::write(&p, &csv).map_err(|e| e.to_string())?;
+            let p: std::path::PathBuf = p;
+            std::fs::write::<&std::path::PathBuf, &String>(&p, &csv).map_err(|e| e.to_string())?;
             Ok(format!("Exported to {}", p.display()))
         }
         None => Err("Export cancelled".to_string()),

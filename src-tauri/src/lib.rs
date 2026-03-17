@@ -11,18 +11,24 @@ pub struct AppState {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .setup(|app| {
-            let conn = db::init_db(app.handle()).expect("Failed to initialize database");
-            app.manage(AppState {
-                db: Mutex::new(conn),
-            });
-            Ok(())
-        })
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_aptabase::Builder::new("A-EU-8092222563").build())
         .plugin(tauri_plugin_process::init())
+        .setup(|app| {
+            match db::init_db(app.handle()) {
+                Ok(conn) => {
+                    app.manage(AppState {
+                        db: std::sync::Mutex::new(conn),
+                    });
+                }
+                Err(e) => {
+                    eprintln!("Database initialization failed: {}", e);
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::get_bank_accounts,
             commands::add_bank_account,

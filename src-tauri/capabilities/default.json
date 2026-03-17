@@ -6,8 +6,9 @@
   "permissions": [
     "core:default",
     "opener:default",
+    "os:default",
     "updater:default",
-    "aptabase:default",
-    "process:allow-restart"
+    "aptabase:allow-track-event",
+    "process:default"
   ]
 }
