@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { trackEvent } from "@aptabase/tauri";
 import { Navigation } from "./components/Navigation";
 import { Sidebar } from "./components/Sidebar";
 import { BankAccount } from "./types";
@@ -14,6 +15,11 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>('system');
   const [showSetup, setShowSetup] = useState(false);
   const [userName, setUserName] = useState<string>('');
+
+  // Track app launch in Aptabase analytics
+  useEffect(() => {
+    trackEvent("app_started");
+  }, []);
 
   useEffect(() => {
     const applyTheme = () => {

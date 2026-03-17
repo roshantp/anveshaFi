@@ -21,6 +21,7 @@ pub fn run() {
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_aptabase::Builder::new("A-EU-8092222563").build())
         .invoke_handler(tauri::generate_handler![
             commands::get_bank_accounts,
             commands::add_bank_account,
