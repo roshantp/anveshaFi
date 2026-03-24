@@ -27,16 +27,31 @@ export default function App() {
     trackEvent("app_started");
 
     // Check for updates silently on launch
-    check().then(update => {
-      if (update?.available) {
-        const msg = `A new version (${update.version}) is available!\n\nWould you like to download and install it now? The app will restart automatically.`;
-        if (window.confirm(msg)) {
-          update.downloadAndInstall().then(() => relaunch());
+    const checkForUpdates = async () => {
+      try {
+        console.log("Checking for updates...");
+        const update = await check();
+        if (update?.available) {
+          console.log(`New version found: ${update.version}`);
+          const confirmed = await showConfirm({
+            title: 'Update Available',
+            message: `A new version (v${update.version}) of anveshaFi is available! \n\nWould you like to download and install it now? The app will restart automatically after the update is complete.`,
+          });
+
+          if (confirmed) {
+            showAlert("Starting update... Please wait. The app will restart when finished.");
+            await update.downloadAndInstall();
+            await relaunch();
+          }
+        } else {
+          console.log("App is up to date.");
         }
+      } catch (e) {
+        console.error("Update check failed:", e);
       }
-    }).catch(() => {
-      // Silently ignore update check failures (e.g., no internet)
-    });
+    };
+
+    checkForUpdates();
   }, []);
 
   useEffect(() => {
