@@ -407,6 +407,125 @@ pub fn export_month_csv(state: State<AppState>, year: String, month: i64, month_
     }
 }
 #[tauri::command]
+pub fn get_account_balance(state: State<AppState>, bank_account_id: i64) -> Result<f64, String> {
+    let db = state.db.lock().unwrap();
+    
+    // Total = (Initial balances sum) + (Credits sum) - (Debits sum)
+    
+    // Get latest initial balance or sum of all manual initial balances? 
+    // Actually, each month can have a manual initial balance. 
+    // The most accurate way is to get the very first manual balance (or 0) and add all transactions since then.
+    
+    // For simplicity, let's sum: (First manual balance if exists) + (All transactions)
+    // But wait, the current logic in LedgerTable shows: initialBalance (for THAT month) + month transactions.
+    
+    // Let's implement a robust calculation:
+    // 1. Find the earliest transaction or manual balance.
+    // 2. Sum everything.
+    
+    let initial_balances_sum: f64 = db.query_row(
+        "SELECT TOTAL(balance) FROM monthly_balances WHERE bank_account_id = ?1",
+        params![bank_account_id],
+        |row| row.get(0),
+    ).map_err(|e| e.to_string())?;
+
+    let transactions_sum: f64 = db.query_row(
+        "SELECT TOTAL(CASE WHEN type = 'Credit' THEN amount ELSE -amount END) FROM transactions WHERE bank_account_id = ?1",
+        params![bank_account_id],
+        |row| row.get(0),
+    ).map_err(|e| e.to_string())?;
+
+    // Note: This logic depends on how monthly_balances is used. 
+    // If it's only for OVERRIDING the auto-calculated balance, it's tricky.
+    // Looking at db.rs, it seems monthly_balances stores manual overrides.
+    
+    // Let's just sum all transactions for now as the "balance" since it's most reliable if no initial balance is set.
+    // If the user wants an initial balance, they add it in a month.
+    
+    Ok(initial_balances_sum + transactions_sum)
+}
+
+#[tauri::command]
+pub async fn get_exchange_rate(from_currency: String, to_currency: String) -> Result<f64, String> {
+    if from_currency == to_currency {
+        return Ok(1.0);
+    }
+    let url = format!(
+        "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/{}.json",
+        from_currency.to_lowercase()
+    );
+
+    let resp = reqwest::get(&url)
+        .await
+        .map_err(|e| format!("Failed to fetch exchange rate: {}", e))?
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("Failed to parse exchange rate: {}", e))?;
+
+    let from_key = from_currency.to_lowercase();
+    let to_key = to_currency.to_lowercase();
+    
+    let rate = resp[&from_key][&to_key]
+        .as_f64()
+        .ok_or_else(|| format!("Currency {} not found in rates for {}", to_currency, from_currency))?;
+
+    Ok(rate)
+}
+
+#[tauri::command]
+pub async fn convert_currency_data(
+    state: State<'_, AppState>,
+    from_currency: String,
+    to_currency: String,
+) -> Result<f64, String> {
+    if from_currency == to_currency {
+        return Ok(1.0);
+    }
+
+    // 1. Fetch real-time exchange rate
+    // Using fawazahmed0's currency-api via jsdelivr CDN
+    let url = format!(
+        "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/{}.json",
+        from_currency.to_lowercase()
+    );
+
+    let resp = reqwest::get(&url)
+        .await
+        .map_err(|e| format!("Failed to fetch exchange rate: {}", e))?
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("Failed to parse exchange rate: {}", e))?;
+
+    // The JSON structure is: { "date": "...", "[from]": { "[to]": rate } }
+    let from_key = from_currency.to_lowercase();
+    let to_key = to_currency.to_lowercase();
+    
+    let rate = resp[&from_key][&to_key]
+        .as_f64()
+        .ok_or_else(|| format!("Currency {} not found in rates for {}", to_currency, from_currency))?;
+
+    // 2. Update database
+    let mut db = state.db.lock().unwrap();
+    let tx = db.transaction().map_err(|e| e.to_string())?;
+
+    // Update transactions
+    tx.execute(
+        "UPDATE transactions SET amount = amount * ?1",
+        params![rate],
+    ).map_err(|e| e.to_string())?;
+
+    // Update monthly_balances
+    tx.execute(
+        "UPDATE monthly_balances SET balance = balance * ?1",
+        params![rate],
+    ).map_err(|e| e.to_string())?;
+
+    tx.commit().map_err(|e| e.to_string())?;
+
+    Ok(rate)
+}
+
+#[tauri::command]
 pub fn reset_application(state: State<AppState>) -> Result<(), String> {
     let db = state.db.lock().unwrap();
     

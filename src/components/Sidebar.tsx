@@ -5,6 +5,7 @@ import { useDialog } from './DialogProvider';
 import { Theme } from './ThemeSelector';
 import textLight from '../assets/text-light.png';
 import textDark from '../assets/text-dark.png';
+import { invoke } from '@tauri-apps/api/core';
 
 interface SidebarProps {
     years: string[];
@@ -19,6 +20,7 @@ interface SidebarProps {
     onDeleteAccount?: (id: number) => void;
     userName: string;
     theme: Theme;
+    systemCurrency: string;
 }
 
 export function Sidebar({
@@ -33,11 +35,34 @@ export function Sidebar({
     onUpdateAccount,
     onDeleteAccount,
     userName,
-    theme
+    theme,
+    systemCurrency
 }: SidebarProps) {
     const { showConfirm } = useDialog();
+
     const [isAddingYear, setIsAddingYear] = useState(false);
     const [newYearInput, setNewYearInput] = useState('');
+
+    // Account Balances State
+    const [, setBalances] = useState<Record<number, number>>({});
+
+    const fetchBalances = async () => {
+        const newBalances: Record<number, number> = {};
+        for (const acc of accounts) {
+            try {
+                // We need a command to get the total balance of an account
+                const balance: number = await invoke('get_account_balance', { bankAccountId: acc.id });
+                newBalances[acc.id] = balance;
+            } catch (e) {
+                console.error(`Failed to fetch balance for account ${acc.id}`, e);
+            }
+        }
+        setBalances(newBalances);
+    };
+
+    useEffect(() => {
+        fetchBalances();
+    }, [accounts, systemCurrency]);
 
     // Year Edit State
     const [editingYear, setEditingYear] = useState<string | null>(null);
@@ -144,7 +169,7 @@ export function Sidebar({
 
             <div className="px-6 pb-8 flex-1 overflow-y-auto custom-scrollbar">
                 {/* Year Section */}
-                <div className="mb-24">
+                <div className="mb-24" id="tour-years">
                     <h2 className="text-lg font-semibold text-zinc-800 dark:text-zinc-200 mb-4">Year</h2>
                     <div className="flex flex-col space-y-3">
                         {years.slice().sort((a, b) => a.localeCompare(b)).map(year => (
@@ -210,6 +235,7 @@ export function Sidebar({
                             </div>
                         ) : (
                             <button
+                                id="tour-add-year"
                                 onClick={() => setIsAddingYear(true)}
                                 className="flex items-center text-sm text-zinc-600 dark:text-zinc-400 hover:text-teal-600 dark:hover:text-teal-400 cursor-pointer font-medium transition-colors"
                             >
@@ -220,7 +246,7 @@ export function Sidebar({
                 </div>
 
                 {/* Account Section */}
-                <div>
+                <div id="tour-accounts">
                     <h2 className="text-lg font-semibold text-zinc-800 dark:text-zinc-200 mb-4">Account</h2>
                     <div className="flex flex-col space-y-3">
                         {accounts.map(acc => (
@@ -249,9 +275,11 @@ export function Sidebar({
                                     </div>
                                 ) : (
                                     <>
-                                        <div className="text-sm text-zinc-600 dark:text-zinc-400 flex items-center gap-2 flex-1 truncate">
-                                            <div className="flex-[0_0_auto] w-2.5 h-2.5 rounded-full" style={{ backgroundColor: acc.color || '#14b8a6' }}></div>
-                                            <span className="truncate">{acc.name}</span>
+                                        <div className="flex flex-col flex-1 min-w-0">
+                                            <div className="text-sm text-zinc-600 dark:text-zinc-400 flex items-center gap-2 truncate">
+                                                <div className="flex-[0_0_auto] w-2.5 h-2.5 rounded-full" style={{ backgroundColor: acc.color || '#14b8a6' }}></div>
+                                                <span className="truncate font-medium">{acc.name}</span>
+                                            </div>
                                         </div>
                                         <div className="flex-[0_0_auto] flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
                                             <button
@@ -307,6 +335,7 @@ export function Sidebar({
                             </div>
                         ) : (
                             <button
+                                id="tour-add-account"
                                 onClick={() => setIsAddingAccount(true)}
                                 className="flex items-center text-sm text-zinc-600 dark:text-zinc-400 hover:text-teal-600 dark:hover:text-teal-400 cursor-pointer font-medium transition-colors mt-2"
                             >

@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { BankAccount } from '../types';
+import { BankAccount, CURRENCIES } from '../types';
 import { Plus, Trash2, Edit2, Check, X, RotateCcw } from 'lucide-react';
 import { useDialog } from './DialogProvider';
 
@@ -8,12 +8,14 @@ interface LedgerTableProps {
     account: BankAccount;
     year: string;
     month: number;
+    systemCurrency: string;
 }
 
 export interface CustomColumn {
     name: string;
-    type: 'text' | 'number' | 'date' | 'dropdown';
+    type: 'text' | 'number' | 'date' | 'dropdown' | 'currency';
     options?: string[];
+    displayCurrency?: string; // New: which currency to show in this column
 }
 
 export interface Transaction {
@@ -28,8 +30,44 @@ export interface Transaction {
     custom_data: string | null; // JSON string
 }
 
-export function LedgerTable({ account, year, month }: LedgerTableProps) {
+function ConversionCell({ amount, fromCurrency, toCurrency }: { amount: number, fromCurrency: string, toCurrency: string }) {
+    const [converted, setConverted] = useState<number | null>(null);
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        if (!fromCurrency || !toCurrency) return;
+        if (fromCurrency === toCurrency) {
+            setConverted(amount);
+            return;
+        }
+
+        const fetchRate = async () => {
+            try {
+                setLoading(true);
+                const rate: number = await invoke('get_exchange_rate', { fromCurrency, toCurrency });
+                setConverted(amount * rate);
+            } catch (e) {
+                console.error("Conversion failed", e);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchRate();
+    }, [amount, fromCurrency, toCurrency]);
+
+    const symbol = CURRENCIES.find(c => c.code === toCurrency)?.symbol || toCurrency;
+
+    if (loading) return <span className="text-[10px] animate-pulse">...</span>;
+    if (converted === null) return <span>-</span>;
+    return <span>{symbol}{converted.toFixed(2)}</span>;
+}
+
+export function LedgerTable({ account, year, month, systemCurrency }: LedgerTableProps) {
     const { showAlert, showConfirm } = useDialog();
+    const currencySymbol = useMemo(() => {
+        return CURRENCIES.find(c => c.code === systemCurrency)?.symbol || systemCurrency;
+    }, [systemCurrency]);
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [initialBalance, setInitialBalance] = useState(0);
     const [inputBalance, setInputBalance] = useState('');
@@ -39,13 +77,13 @@ export function LedgerTable({ account, year, month }: LedgerTableProps) {
     const [customColumns, setCustomColumns] = useState<CustomColumn[]>([]);
     const [isAddingCol, setIsAddingCol] = useState(false);
     const [newColName, setNewColName] = useState('');
-    const [newColType, setNewColType] = useState<'text' | 'number' | 'date' | 'dropdown'>('text');
+    const [newColType, setNewColType] = useState<'text' | 'number' | 'date' | 'dropdown' | 'currency'>('text');
     const [newColOptions, setNewColOptions] = useState(''); // Comma separated
 
     // Edit Custom Column State
     const [editingColName, setEditingColName] = useState<string | null>(null);
     const [editColName, setEditColName] = useState('');
-    const [editColType, setEditColType] = useState<'text' | 'number' | 'date' | 'dropdown'>('text');
+    const [editColType, setEditColType] = useState<'text' | 'number' | 'date' | 'dropdown' | 'currency'>('text');
     const [editColOptions, setEditColOptions] = useState('');
 
     // New Transaction Form State
@@ -55,6 +93,14 @@ export function LedgerTable({ account, year, month }: LedgerTableProps) {
     const [newTxRemarks, setNewTxRemarks] = useState('');
     const [newTxCustom, setNewTxCustom] = useState<Record<string, string>>({});
     const [txErrors, setTxErrors] = useState<{ date?: boolean; amount?: boolean }>({});
+
+    // Set default currency for custom column if it exists
+    useEffect(() => {
+        const currencyCol = customColumns.find(c => c.type === 'currency');
+        if (currencyCol && !newTxCustom[currencyCol.name]) {
+            setNewTxCustom(prev => ({ ...prev, [currencyCol.name]: systemCurrency }));
+        }
+    }, [customColumns, systemCurrency]);
 
     // Edit Transaction State
     const [editingTxId, setEditingTxId] = useState<number | null>(null);
@@ -111,7 +157,7 @@ export function LedgerTable({ account, year, month }: LedgerTableProps) {
 
     useEffect(() => {
         fetchLedgerData();
-    }, [account.id, year, month]);
+    }, [account.id, year, month, systemCurrency]);
 
     // Sync mirror scrollbar with table scroll
     useEffect(() => {
@@ -245,12 +291,27 @@ export function LedgerTable({ account, year, month }: LedgerTableProps) {
         setTxErrors({});
 
         try {
+            let finalAmount = parseFloat(newTxAmount);
+            
+            // Multi-currency logic: If there's a currency column and it's set
+            const currencyCol = customColumns.find(c => c.type === 'currency');
+            if (currencyCol && newTxCustom[currencyCol.name]) {
+                const sourceCurrency = newTxCustom[currencyCol.name];
+                if (sourceCurrency !== systemCurrency) {
+                    const rate: number = await invoke('get_exchange_rate', {
+                        fromCurrency: sourceCurrency,
+                        toCurrency: systemCurrency
+                    });
+                    finalAmount = finalAmount * rate;
+                }
+            }
+
             await invoke('add_transaction', {
                 bankAccountId: account.id,
                 year,
                 month,
                 transactionDate: newTxDate,
-                amount: parseFloat(newTxAmount),
+                amount: finalAmount,
                 transactionType: newTxType,
                 remarks: newTxRemarks || null,
                 customData: Object.keys(newTxCustom).length > 0 ? JSON.stringify(newTxCustom) : null,
@@ -281,10 +342,25 @@ export function LedgerTable({ account, year, month }: LedgerTableProps) {
     const handleUpdateTx = async (id: number) => {
         if (!editTxDate || !editTxAmount) return;
         try {
+            let finalAmount = parseFloat(editTxAmount);
+            
+            // Multi-currency logic: If there's a currency column and it's set
+            const currencyCol = customColumns.find(c => c.type === 'currency');
+            if (currencyCol && editTxCustom[currencyCol.name]) {
+                const sourceCurrency = editTxCustom[currencyCol.name];
+                if (sourceCurrency !== systemCurrency) {
+                    const rate: number = await invoke('get_exchange_rate', {
+                        fromCurrency: sourceCurrency,
+                        toCurrency: systemCurrency
+                    });
+                    finalAmount = finalAmount * rate;
+                }
+            }
+
             await invoke('update_transaction', {
                 id,
                 transactionDate: editTxDate,
-                amount: parseFloat(editTxAmount),
+                amount: finalAmount,
                 transactionType: editTxType,
                 remarks: editTxRemarks || null,
                 customData: Object.keys(editTxCustom).length > 0 ? JSON.stringify(editTxCustom) : null,
@@ -314,7 +390,7 @@ export function LedgerTable({ account, year, month }: LedgerTableProps) {
 
     let runningBalance = initialBalance;
 
-    const minTableWidth = 660 + (customColumns.length * 150);
+    const minTableWidth = 660 + (customColumns.length * 170);
 
     if (loading) return <div className="p-4 text-slate-400">Loading {account.name} Ledger...</div>;
 
@@ -329,7 +405,7 @@ export function LedgerTable({ account, year, month }: LedgerTableProps) {
                     </h3>
                     <div className="flex gap-2">
                         {!isAddingCol ? (
-                            <button onClick={() => setIsAddingCol(true)} className="text-sm bg-white dark:bg-zinc-800/50 hover:bg-zinc-200 dark:hover:bg-zinc-700/50 text-teal-400 border border-teal-500/30 px-4 py-1.5 rounded-xl transition-all font-medium cursor-pointer">+ Custom Column</button>
+                            <button id="tour-add-column" onClick={() => setIsAddingCol(true)} className="text-sm bg-white dark:bg-zinc-800/50 hover:bg-zinc-200 dark:hover:bg-zinc-700/50 text-teal-400 border border-teal-500/30 px-4 py-1.5 rounded-xl transition-all font-medium cursor-pointer">+ Custom Column</button>
                         ) : (
                             <div className="flex items-center gap-2 rounded-xl overflow-hidden border border-zinc-300 dark:border-zinc-700/50 p-1 bg-white dark:bg-zinc-800/30 text-xs">
                                 <input
@@ -341,13 +417,20 @@ export function LedgerTable({ account, year, month }: LedgerTableProps) {
                                 />
                                 <select
                                     value={newColType}
-                                    onChange={e => setNewColType(e.target.value as any)}
+                                    onChange={e => {
+                                        const type = e.target.value as any;
+                                        setNewColType(type);
+                                        if (type === 'currency' && !newColName.trim()) {
+                                            setNewColName('Currency');
+                                        }
+                                    }}
                                     className="bg-zinc-100 dark:bg-black/20 border-none rounded-md px-2 py-1.5 outline-none text-zinc-800 dark:text-zinc-200 cursor-pointer"
                                 >
                                     <option className="bg-white dark:bg-zinc-800" value="text">Text</option>
                                     <option className="bg-white dark:bg-zinc-800" value="number">Number</option>
                                     <option className="bg-white dark:bg-zinc-800" value="date">Date</option>
                                     <option className="bg-white dark:bg-zinc-800" value="dropdown">Dropdown</option>
+                                    <option className="bg-white dark:bg-zinc-800" value="currency">Currency</option>
                                 </select>
 
                                 {newColType === 'dropdown' && (
@@ -400,7 +483,7 @@ export function LedgerTable({ account, year, month }: LedgerTableProps) {
                             </button>
                         </div>
                         <div className="flex items-center mt-1">
-                            <span className="text-zinc-500 dark:text-zinc-400 font-mono mr-1 font-bold text-lg">रु</span>
+                            <span className="text-zinc-500 dark:text-zinc-400 font-mono mr-1 font-bold text-lg">{currencySymbol}</span>
                             <input
                                 type="text"
                                 value={inputBalance}
@@ -417,7 +500,7 @@ export function LedgerTable({ account, year, month }: LedgerTableProps) {
                         <span className="text-zinc-600 dark:text-zinc-400 font-semibold tracking-[0.1em] text-[10px] uppercase mb-1">Remaining Balance</span>
                         <div className="flex items-center">
                             <span className={`text-xl font-mono font-bold ${remainingBalance >= 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'}`}>
-                                रु{remainingBalance.toFixed(2)}
+                                {currencySymbol}{remainingBalance.toFixed(2)}
                             </span>
                         </div>
                     </div>
@@ -434,7 +517,7 @@ export function LedgerTable({ account, year, month }: LedgerTableProps) {
                             <th className="pb-3 px-3" style={{ width: 120, minWidth: 120, maxWidth: 120 }}>Amount</th>
                             <th className="pb-3 px-3" style={{ width: 'auto', minWidth: 200 }}>Remarks</th>
                             {customColumns.map(col => (
-                                <th key={col.name} className="pb-3 px-3 group whitespace-nowrap" style={{ width: 150, minWidth: 150, maxWidth: 150 }}>
+                                <th key={col.name} className="pb-3 px-3 group" style={{ width: 170, minWidth: 170, maxWidth: 170 }}>
                                     {editingColName === col.name ? (
                                         <div className="flex items-center gap-1">
                                             <input type="text" value={editColName} onChange={e => setEditColName(e.target.value)} className="bg-zinc-100 dark:bg-black/20 border border-teal-500/50 rounded px-1.5 py-0.5 text-xs text-zinc-900 dark:text-white outline-none w-20" autoFocus onKeyDown={e => { if (e.key === 'Enter') handleUpdateColumn(col.name); if (e.key === 'Escape') setEditingColName(null); }} />
@@ -443,17 +526,36 @@ export function LedgerTable({ account, year, month }: LedgerTableProps) {
                                                 <option value="number">Number</option>
                                                 <option value="date">Date</option>
                                                 <option value="dropdown">Dropdown</option>
+                                                <option value="currency">Currency</option>
                                             </select>
                                             {editColType === 'dropdown' && (<input type="text" value={editColOptions} onChange={e => setEditColOptions(e.target.value)} placeholder="opt1,opt2" className="bg-zinc-100 dark:bg-black/20 border border-zinc-300 dark:border-zinc-700/50 rounded px-1.5 py-0.5 text-[10px] outline-none w-20 text-zinc-900 dark:text-white normal-case font-normal" />)}
                                             <button onClick={() => handleUpdateColumn(col.name)} className="p-0.5 text-teal-500 hover:text-teal-400 cursor-pointer"><Check size={12} /></button>
                                             <button onClick={() => setEditingColName(null)} className="p-0.5 text-zinc-500 hover:text-zinc-400 cursor-pointer"><X size={12} /></button>
                                         </div>
                                     ) : (
-                                        <>
-                                            {col.name} <span className="text-[10px] lowercase text-zinc-400 font-normal">({col.type})</span>
-                                            <button onClick={() => { setEditingColName(col.name); setEditColName(col.name); setEditColType(col.type); setEditColOptions(col.options?.join(', ') || ''); }} className="ml-1 text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity hover:text-teal-400 cursor-pointer" title="Edit Column"><Edit2 size={12} className="inline" /></button>
-                                            <button onClick={() => handleRemoveColumn(col.name)} className="ml-0.5 text-rose-500/70 opacity-0 group-hover:opacity-100 transition-opacity hover:text-rose-400 cursor-pointer" title="Remove Column"><Trash2 size={12} className="inline" /></button>
-                                        </>
+                                        <div className="flex flex-col gap-0.5 min-w-0">
+                                            <div className="flex items-center gap-1 min-w-0">
+                                                <span className="truncate flex-1 min-w-0">{col.name}</span>
+                                                {col.type !== 'currency' && <span className="text-[10px] lowercase text-zinc-400 font-normal">({col.type})</span>}
+                                                <button onClick={() => { setEditingColName(col.name); setEditColName(col.name); setEditColType(col.type); setEditColOptions(col.options?.join(', ') || ''); }} className="text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity hover:text-teal-400 cursor-pointer flex-shrink-0" title="Edit Column"><Edit2 size={12} /></button>
+                                                <button onClick={() => handleRemoveColumn(col.name)} className="text-rose-500/70 opacity-0 group-hover:opacity-100 transition-opacity hover:text-rose-400 cursor-pointer flex-shrink-0" title="Remove Column"><Trash2 size={12} /></button>
+                                            </div>
+                                            {col.type === 'currency' && (
+                                                <select
+                                                    value={col.displayCurrency || systemCurrency}
+                                                    onChange={e => {
+                                                        const newCols = customColumns.map(c => 
+                                                            c.name === col.name ? { ...c, displayCurrency: e.target.value } : c
+                                                        );
+                                                        setCustomColumns(newCols);
+                                                        localStorage.setItem(`custom_cols_${account.id}`, JSON.stringify(newCols));
+                                                    }}
+                                                    className="bg-zinc-100 dark:bg-zinc-800 rounded px-1.5 py-0.5 text-xs outline-none text-teal-500 border border-teal-500/20 cursor-pointer font-bold normal-case tracking-normal w-fit"
+                                                >
+                                                    {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.code}</option>)}
+                                                </select>
+                                            )}
+                                        </div>
                                     )}
                                 </th>
                             ))}
@@ -484,11 +586,16 @@ export function LedgerTable({ account, year, month }: LedgerTableProps) {
                                 <input type="text" placeholder="Add remarks..." value={newTxRemarks} onChange={e => setNewTxRemarks(e.target.value)} className="bg-zinc-100 dark:bg-black/20 border border-zinc-300 dark:border-zinc-700/50 rounded-lg px-3 py-2 outline-none text-zinc-800 dark:text-zinc-200 w-full focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/50 transition-all placeholder-zinc-600 text-xs" />
                             </td>
                             {customColumns.map(col => (
-                                <td key={col.name} className="py-3 px-3" style={{ width: 150, minWidth: 150, maxWidth: 150 }}>
+                                <td key={col.name} className="py-3 px-3" style={{ width: 170, minWidth: 170, maxWidth: 170 }}>
                                     {col.type === 'dropdown' ? (
-                                        <select value={newTxCustom[col.name] || ''} onChange={e => setNewTxCustom({ ...newTxCustom, [col.name]: e.target.value })} className="bg-zinc-100 dark:bg-black/20 border border-zinc-300 dark:border-zinc-700/50 rounded-lg px-2 py-2 outline-none text-zinc-800 dark:text-zinc-200 w-full focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/50 transition-all text-xs min-w-[100px]">
+                                        <select value={newTxCustom[col.name] || ''} onChange={e => setNewTxCustom({ ...newTxCustom, [col.name]: e.target.value })} className="bg-zinc-100 dark:bg-black/20 border border-zinc-300 dark:border-zinc-700/50 rounded-lg px-3 py-2 outline-none text-zinc-800 dark:text-zinc-200 w-full focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/50 transition-all text-sm min-w-[120px]">
                                             <option className="bg-white dark:bg-zinc-800" value="">Select...</option>
                                             {col.options?.map(opt => (<option className="bg-white dark:bg-zinc-800" key={opt} value={opt}>{opt}</option>))}
+                                        </select>
+                                    ) : col.type === 'currency' ? (
+                                        <select value={newTxCustom[col.name] || ''} onChange={e => setNewTxCustom({ ...newTxCustom, [col.name]: e.target.value })} className="bg-zinc-100 dark:bg-black/20 border border-zinc-300 dark:border-zinc-700/50 rounded-lg px-3 py-2 outline-none text-zinc-800 dark:text-zinc-200 w-full focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/50 transition-all text-sm min-w-[120px]">
+                                            <option className="bg-white dark:bg-zinc-800" value="">Select...</option>
+                                            {CURRENCIES.map(c => (<option className="bg-white dark:bg-zinc-800" key={c.code} value={c.code}>{c.code}</option>))}
                                         </select>
                                     ) : col.type === 'date' ? (
                                         <input type="date" value={newTxCustom[col.name] || ''} onChange={e => setNewTxCustom({ ...newTxCustom, [col.name]: e.target.value })} className="bg-zinc-100 dark:bg-black/20 border border-zinc-300 dark:border-zinc-700/50 rounded-lg px-2 py-2 outline-none text-zinc-800 dark:text-zinc-200 w-full focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/50 transition-all text-xs" />
@@ -531,7 +638,7 @@ export function LedgerTable({ account, year, month }: LedgerTableProps) {
                                             <input type="date" value={editTxDate} onChange={e => setEditTxDate(e.target.value)} className="bg-zinc-100 dark:bg-black/30 border border-teal-500/50 rounded-lg px-2 py-1.5 outline-none text-zinc-800 dark:text-zinc-200 w-full font-mono text-xs" />
                                         </td>
                                         <td className="py-2 px-2">
-                                            <select value={editTxType} onChange={e => setEditTxType(e.target.value as 'Credit' | 'Debit')} className="bg-zinc-100 dark:bg-zinc-800 border border-teal-500/50 rounded-lg px-2 py-1.5 outline-none text-zinc-800 dark:text-zinc-200 w-full text-xs cursor-pointer">
+                                            <select value={editTxType} onChange={e => setEditTxType(e.target.value as 'Credit' | 'Debit')} className="bg-zinc-100 dark:bg-zinc-800 border border-teal-500/50 rounded-lg px-3 py-1.5 outline-none text-zinc-800 dark:text-zinc-200 w-full text-sm cursor-pointer">
                                                 <option className="bg-white dark:bg-zinc-800" value="Debit">Debit</option>
                                                 <option className="bg-white dark:bg-zinc-800" value="Credit">Credit</option>
                                             </select>
@@ -544,7 +651,21 @@ export function LedgerTable({ account, year, month }: LedgerTableProps) {
                                         </td>
                                         {customColumns.map(col => (
                                             <td key={col.name} className="py-2 px-2">
-                                                <input type="text" value={editTxCustom[col.name] || ''} onChange={e => setEditTxCustom({ ...editTxCustom, [col.name]: e.target.value })} className="bg-zinc-100 dark:bg-black/30 border border-teal-500/50 rounded-lg px-2 py-1.5 outline-none text-zinc-800 dark:text-zinc-200 w-full text-xs" placeholder={col.name} />
+                                                {col.type === 'dropdown' ? (
+                                                    <select value={editTxCustom[col.name] || ''} onChange={e => setEditTxCustom({ ...editTxCustom, [col.name]: e.target.value })} className="bg-zinc-100 dark:bg-zinc-800 border border-teal-500/50 rounded-lg px-3 py-1.5 outline-none text-zinc-800 dark:text-zinc-200 w-full text-sm cursor-pointer">
+                                                        <option className="bg-white dark:bg-zinc-800" value="">Select...</option>
+                                                        {col.options?.map(opt => (<option className="bg-white dark:bg-zinc-800" key={opt} value={opt}>{opt}</option>))}
+                                                    </select>
+                                                ) : col.type === 'currency' ? (
+                                                    <select value={editTxCustom[col.name] || ''} onChange={e => setEditTxCustom({ ...editTxCustom, [col.name]: e.target.value })} className="bg-zinc-100 dark:bg-zinc-800 border border-teal-500/50 rounded-lg px-3 py-1.5 outline-none text-zinc-800 dark:text-zinc-200 w-full text-sm cursor-pointer">
+                                                        <option className="bg-white dark:bg-zinc-800" value="">Select...</option>
+                                                        {CURRENCIES.map(c => (<option className="bg-white dark:bg-zinc-800" key={c.code} value={c.code}>{c.code}</option>))}
+                                                    </select>
+                                                ) : col.type === 'date' ? (
+                                                    <input type="date" value={editTxCustom[col.name] || ''} onChange={e => setEditTxCustom({ ...editTxCustom, [col.name]: e.target.value })} className="bg-zinc-100 dark:bg-black/30 border border-teal-500/50 rounded-lg px-2 py-1.5 outline-none text-zinc-800 dark:text-zinc-200 w-full font-mono text-xs" />
+                                                ) : (
+                                                    <input type={col.type === 'number' ? 'number' : 'text'} value={editTxCustom[col.name] || ''} onChange={e => setEditTxCustom({ ...editTxCustom, [col.name]: e.target.value })} className="bg-zinc-100 dark:bg-black/30 border border-teal-500/50 rounded-lg px-2 py-1.5 outline-none text-zinc-800 dark:text-zinc-200 w-full text-xs" placeholder={col.name} />
+                                                )}
                                             </td>
                                         ))}
                                         <td className="py-2 px-2 text-center">
@@ -566,14 +687,22 @@ export function LedgerTable({ account, year, month }: LedgerTableProps) {
                                         </span>
                                     </td>
                                     <td className={`py-3 px-3 text-left font-mono text-sm ${tx.transaction_type === 'Credit' ? 'text-emerald-400' : 'text-zinc-800 dark:text-zinc-200'}`} style={{ width: 120, minWidth: 120, maxWidth: 120 }}>
-                                        {tx.transaction_type === 'Credit' ? '+' : ''}रु{tx.amount.toFixed(2)}
+                                        {tx.transaction_type === 'Credit' ? '+' : ''}{currencySymbol}{tx.amount.toFixed(2)}
                                     </td>
 
                                     <td className="py-3 px-3 text-zinc-700 dark:text-zinc-300 truncate max-w-[200px]" style={{ width: 'auto', minWidth: 200 }}>{tx.remarks}</td>
 
                                     {customColumns.map(col => (
-                                        <td key={col.name} className="py-3 px-3 text-zinc-500 text-sm truncate max-w-[150px]" style={{ width: 150, minWidth: 150, maxWidth: 150 }}>
-                                            {customData[col.name] || <span className="text-zinc-700/50">-</span>}
+                                        <td key={col.name} className="py-3 px-3 text-zinc-500 text-sm truncate max-w-[170px]" style={{ width: 170, minWidth: 170, maxWidth: 170 }}>
+                                            {col.type === 'currency' ? (
+                                                <ConversionCell 
+                                                    amount={tx.amount} 
+                                                    fromCurrency={systemCurrency} 
+                                                    toCurrency={col.displayCurrency || systemCurrency} 
+                                                />
+                                            ) : (
+                                                customData[col.name] || <span className="text-zinc-700/50">-</span>
+                                            )}
                                         </td>
                                     ))}
 

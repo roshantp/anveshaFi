@@ -1,7 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
-import { Download, Sun, Moon, Settings, User, RotateCcw } from 'lucide-react';
+import { Download, Sun, Moon, Settings, User, RotateCcw, Coins } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { Theme } from './ThemeSelector';
+import { CURRENCIES } from '../types';
 
 interface NavigationProps {
     months: number[];
@@ -15,6 +16,8 @@ interface NavigationProps {
     userName: string;
     onUpdateUserName: (name: string) => void;
     onReset: () => void;
+    systemCurrency: string;
+    onUpdateSystemCurrency: (currency: string) => void;
 }
 
 const NEPALI_MONTHS = [
@@ -38,7 +41,9 @@ export function Navigation({
     onToggleMonthType,
     userName,
     onUpdateUserName,
-    onReset
+    onReset,
+    systemCurrency,
+    onUpdateSystemCurrency
 }: NavigationProps) {
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [isEditingName, setIsEditingName] = useState(false);
@@ -84,7 +89,7 @@ export function Navigation({
 
     return (
         <div className="flex items-center w-full h-[65px] bg-white dark:bg-zinc-900/60 border-b border-zinc-200 dark:border-transparent relative z-30 px-6">
-            <div className="flex gap-3 items-center overflow-x-auto custom-scrollbar flex-1 py-1 pr-4 pl-1 scroll-smooth">
+            <div id="tour-months" className="flex gap-3 items-center overflow-x-auto custom-scrollbar flex-1 py-1 pr-4 pl-1 scroll-smooth">
                 {months.sort((a, b) => a - b).map(month => (
                     <button
                         key={month}
@@ -118,6 +123,7 @@ export function Navigation({
                 </button>
                 <div className="w-px h-5 bg-zinc-200 dark:bg-zinc-700 mx-1" />
                 <button
+                    id="tour-month-toggle"
                     onClick={onToggleMonthType}
                     className="bg-zinc-100 dark:bg-zinc-800/60 hover:bg-zinc-200 dark:hover:bg-zinc-700/80 px-2 py-1.5 rounded-xl transition-all border border-zinc-200 dark:border-zinc-700/50 text-teal-600 dark:text-teal-400 font-bold text-[10px] tracking-wider cursor-pointer flex items-center justify-center min-w-[32px]"
                     title="Toggle Calendar Language"
@@ -125,6 +131,7 @@ export function Navigation({
                     {monthType === 'Nepali' ? 'NP' : 'EN'}
                 </button>
                 <button
+                    id="tour-theme-toggle"
                     onClick={() => {
                         const isCurrentlyDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
                         onThemeChange(isCurrentlyDark ? 'light' : 'dark');
@@ -144,6 +151,7 @@ export function Navigation({
 
                 <div className="relative" ref={settingsRef}>
                     <button
+                        id="tour-settings"
                         onClick={() => setIsSettingsOpen(!isSettingsOpen)}
                         className={`p-1.5 rounded-xl transition-all border cursor-pointer ${isSettingsOpen ? 'bg-teal-500 text-white border-teal-500' : 'bg-zinc-100 dark:bg-zinc-800/60 hover:bg-zinc-200 dark:hover:bg-zinc-700/80 border-zinc-200 dark:border-zinc-700/50 text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white'}`}
                         title="Settings"
@@ -207,6 +215,24 @@ export function Navigation({
                                 </div>
 
                                 <div className="h-px bg-zinc-100 dark:bg-zinc-800 mx-1" />
+
+                                <div className="px-1">
+                                    <h4 className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest mb-3">System Currency</h4>
+                                    <div className="flex items-center gap-3 p-2">
+                                        <div className="w-8 h-8 rounded-lg bg-teal-500/10 text-teal-600 flex items-center justify-center flex-shrink-0">
+                                            <Coins size={14} />
+                                        </div>
+                                        <select
+                                            value={systemCurrency}
+                                            onChange={e => onUpdateSystemCurrency(e.target.value)}
+                                            className="flex-1 min-w-0 overflow-hidden text-ellipsis px-3 py-2 text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-900 dark:text-zinc-100 outline-none focus:border-teal-500 cursor-pointer font-bold"
+                                        >
+                                            {CURRENCIES.map(c => (
+                                                <option key={c.code} value={c.code}>{c.code} - {c.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
 
                                 <div className="px-1">
                                     <h4 className="text-[10px] font-bold text-rose-500 uppercase tracking-widest mb-3">Zone Danger</h4>

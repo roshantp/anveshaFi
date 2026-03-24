@@ -48,7 +48,10 @@ pub fn run() {
             commands::export_month_csv,
             commands::get_setting,
             commands::set_setting,
-            commands::reset_application
+            commands::reset_application,
+            commands::convert_currency_data,
+            commands::get_account_balance,
+            commands::get_exchange_rate
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

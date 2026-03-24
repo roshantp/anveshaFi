@@ -10,13 +10,17 @@ import { LedgerTable } from "./components/LedgerTable";
 import { useDialog } from "./components/DialogProvider";
 import { Theme } from "./components/ThemeSelector";
 import { FirstTimeSetup } from "./components/FirstTimeSetup";
+import { OnboardingTour } from "./components/OnboardingTour";
 
 export default function App() {
   const { showAlert, showConfirm } = useDialog();
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [theme, setTheme] = useState<Theme>('system');
   const [showSetup, setShowSetup] = useState(false);
-  const [userName, setUserName] = useState<string>('');
+  const [showTour, setShowTour] = useState(false);
+  const [userName, setUserName] = useState('');
+
+  const [systemCurrency, setSystemCurrency] = useState<string>('NPR');
 
   // Track app launch and check for updates
   useEffect(() => {
@@ -108,9 +112,11 @@ export default function App() {
     // Load settings
     (async () => {
       try {
-        const [name, storedTheme] = await Promise.all([
+        const [name, storedTheme, storedCurrency, tourCompleted] = await Promise.all([
           invoke('get_setting', { key: 'user_name' }) as Promise<string | null>,
-          invoke('get_setting', { key: 'theme' }) as Promise<string | null>
+          invoke('get_setting', { key: 'theme' }) as Promise<string | null>,
+          invoke('get_setting', { key: 'system_currency' }) as Promise<string | null>,
+          invoke('get_setting', { key: 'has_completed_tour' }) as Promise<string | null>
         ]);
 
         if (name) {
@@ -121,9 +127,15 @@ export default function App() {
           setTheme(storedTheme as Theme);
         }
 
+        if (storedCurrency) {
+          setSystemCurrency(storedCurrency);
+        }
+
         // Check if we need setup
         if (!name || !storedTheme) {
           setShowSetup(true);
+        } else if (!tourCompleted) {
+          setShowTour(true);
         }
       } catch (e) {
         console.error('Failed to load settings', e);
@@ -131,17 +143,31 @@ export default function App() {
     })();
   }, []);
 
-  const handleSetupComplete = async (name: string, selectedTheme: Theme) => {
+  const handleSetupComplete = async (name: string, selectedTheme: Theme, selectedCurrency: string) => {
     try {
       setUserName(name);
       setTheme(selectedTheme);
+      setSystemCurrency(selectedCurrency);
       setShowSetup(false);
+      setShowTour(true); // Show tour immediately after setup
+      trackEvent("setup_completed", { theme: selectedTheme, currency: selectedCurrency });
       await Promise.all([
         invoke('set_setting', { key: 'user_name', value: name }),
-        invoke('set_setting', { key: 'theme', value: selectedTheme })
+        invoke('set_setting', { key: 'theme', value: selectedTheme }),
+        invoke('set_setting', { key: 'system_currency', value: selectedCurrency })
       ]);
     } catch (e) {
       console.error('Failed to save settings', e);
+    }
+  };
+
+  const handleTourComplete = async () => {
+    setShowTour(false);
+    try {
+      await invoke('set_setting', { key: 'has_completed_tour', value: 'true' });
+      trackEvent("tour_completed");
+    } catch (e) {
+      console.error('Failed to save tour completion', e);
     }
   };
 
@@ -160,6 +186,37 @@ export default function App() {
       await invoke('set_setting', { key: 'user_name', value: newName });
     } catch (e) {
       console.error('Failed to save username', e);
+    }
+  };
+
+  const handleUpdateSystemCurrency = async (newCurrency: string) => {
+    if (newCurrency === systemCurrency) return;
+
+    const confirmed = await showConfirm({
+      title: 'Change System Currency',
+      message: `Are you sure you want to change the system currency from ${systemCurrency} to ${newCurrency}? \n\nThis will convert ALL existing transaction amounts and balances using the real-time exchange rate. This action cannot be undone.`,
+    });
+
+    if (confirmed) {
+      try {
+        showAlert("Converting currency... Please wait.");
+        const rate: number = await invoke('convert_currency_data', {
+          fromCurrency: systemCurrency,
+          toCurrency: newCurrency
+        });
+
+        setSystemCurrency(newCurrency);
+        await invoke('set_setting', { key: 'system_currency', value: newCurrency });
+        
+        await showAlert(`Currency converted successfully! (Rate: 1 ${systemCurrency} = ${rate.toFixed(4)} ${newCurrency})`);
+        
+        // Refresh data
+        fetchAccounts();
+        fetchYears();
+      } catch (e) {
+        console.error('Failed to convert currency', e);
+        await showAlert('Failed to convert currency: ' + JSON.stringify(e));
+      }
     }
   };
 
@@ -228,6 +285,7 @@ export default function App() {
   const handleAddAccount = async (name: string, color: string) => {
     try {
       await invoke('add_bank_account', { name, color });
+      trackEvent("account_added");
       fetchAccounts();
     } catch (e) {
       console.error("Failed to add account", e);
@@ -272,6 +330,7 @@ export default function App() {
         onDeleteAccount={handleDeleteAccount}
         userName={userName}
         theme={theme}
+        systemCurrency={systemCurrency}
       />
 
       <div className="flex-1 flex flex-col min-w-0 relative">
@@ -287,6 +346,8 @@ export default function App() {
           userName={userName}
           onUpdateUserName={handleUpdateUserName}
           onReset={handleReset}
+          systemCurrency={systemCurrency}
+          onUpdateSystemCurrency={handleUpdateSystemCurrency}
         />
 
         <div className="flex-1 overflow-hidden flex bg-white dark:bg-zinc-900">
@@ -330,9 +391,11 @@ export default function App() {
                   </div>
                   <div className="flex-1 overflow-hidden relative">
                     <LedgerTable
+                      key={`${acc.id}-${selectedYear}-${selectedMonth}-${systemCurrency}`}
                       account={acc}
                       year={selectedYear}
                       month={selectedMonth}
+                      systemCurrency={systemCurrency}
                     />
                   </div>
                 </div>
@@ -343,6 +406,9 @@ export default function App() {
       </div>
       {showSetup && (
         <FirstTimeSetup onComplete={handleSetupComplete} />
+      )}
+      {showTour && !showSetup && (
+        <OnboardingTour userName={userName} onComplete={handleTourComplete} />
       )}
     </div>
   );
