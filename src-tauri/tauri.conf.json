@@ -39,7 +39,7 @@
   "plugins": {
     "updater": {
       "active": true,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQwNkQ4QjZBMThFRjJEQzYKUldUR0xlOFFlhb3R0ME1nR25CUmtWNkM1SHMrUnQyZnorNlVacnV5TXVnM1hLOTU4dmFuS0drTXkK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQwNkQ4QjZBMThFRjJEQzYKUldUR0xlOFlhb3R0ME1nR25CUmtWNkM1SHMrUnQyZnorNlVacnV5TXVnM1hLOTU4dmFuS0drTXkK",
       "endpoints": [
         "https://github.com/roshantp/anveshaFi/releases/latest/download/latest.json"
       ]
